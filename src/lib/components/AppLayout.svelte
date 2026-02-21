@@ -5,13 +5,6 @@
 	import Carousel from '$lib/components/Carousel.svelte';
 	import { capitalize } from '$lib/helper';
 	import Btn from './Btn.svelte';
-	import categories from '$lib/data/categories.json';
-
-	function get_icon(cat: string): string {
-		const tmp = categories.filter((val) => val.name == cat);
-		if (tmp.length == 0) return '';
-		else return tmp[0].emoji;
-	}
 </script>
 
 {#if card}
@@ -22,9 +15,9 @@
 				<img src="{base}/img/{image}" class="h-48" alt={image} />
 			</div>
 
-			<!-- Icon -->
+			<!-- Category Label -->
 			<div class="bg-opacity-50 absolute top-4 right-4 flex items-center space-x-2 rounded-full bg-black px-3 py-1">
-				<span class="text-xs font-medium text-white">{get_icon(category)} {capitalize(category)}</span>
+				<span class="text-xs font-medium text-white">{capitalize(category)}</span>
 			</div>
 		</div>
 
