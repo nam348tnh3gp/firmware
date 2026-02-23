@@ -10,7 +10,6 @@
 	import { installService, type InstallProgress } from '$lib/install-service';
 
 	const components = import.meta.glob('$lib/apps/*.md', { eager: true });
-	console.log(Object.entries(components));
 
 	$current_page = Page.AppStore;
 
