@@ -610,13 +610,13 @@
 
 	<!-- Category apps display -->
 	{#if $searchedApps.length > 0}
-		<div class="mt-8">
+		<div class="mt-8 mb-8">
 			<h3 class="text-xl font-bold mb-4">
 				{$searchQuery ? `Search Results` : ($selectedCategory === 'All' ? 'All Apps/Themes' : $selectedCategory)}
 				{$selectedDevice !== 'All Devices' ? ` for ${$selectedDevice}` : ''}
 				{$searchQuery ? ` (${$searchedApps.length} found)` : ''}
 			</h3>
-			<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6 max-w-6xl mx-auto px-2 sm:px-0">
+			<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6 max-w-6xl mx-auto px-2 sm:px-0 pb-8">
 				{#each $searchedApps as app}
 				<div 
 					class="bg-gray-800 rounded-lg overflow-hidden shadow-lg hover:shadow-xl transition-shadow relative cursor-pointer transform hover:scale-105"
