@@ -437,99 +437,104 @@
 	<AttentionBanner />
 	<InstallationBanner />
 	
-	<!-- Search Bar -->
-	<div class="mt-6 mb-8 flex flex-col items-center gap-3">
-		<h3 class="text-lg font-semibold text-white">Search</h3>
-		<div class="flex flex-col sm:flex-row items-center gap-3">
-			<div class="relative">
-				<input
-					type="text"
-					placeholder="Search..."
-					bind:value={localSearchQuery}
-					oninput={(e) => applySearchFilter(e.target.value)}
-					class="bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-purple-500 focus:outline-none focus:ring-2 focus:ring-purple-500/20 min-w-[300px] transition-all duration-200 pl-10"
-				>
-				<!-- Search Icon -->
-				<svg class="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m21 21-6-6m2-5a7 7 0 1 1-14 0 7 7 0 0 1 14 0z"></path>
-				</svg>
-				{#if localSearchQuery}
-					<button
-						onclick={() => { localSearchQuery = ''; applySearchFilter(''); }}
-						class="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-white"
-					>
-						<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+	<!-- Search and Filter Section -->
+	<div class="mt-6 mb-8 flex flex-col items-center gap-6">
+		<!-- Combined Search and Device Filter (horizontal on large screens) -->
+		<div class="flex flex-col lg:flex-row items-center gap-6 w-full max-w-4xl">
+			<!-- Search Section -->
+			<div class="flex flex-col items-center gap-3 flex-1">
+				<div class="flex flex-col sm:flex-row items-center gap-3 w-full max-w-md">
+					<div class="relative w-full">
+						<input
+							type="text"
+							placeholder="Search..."
+							bind:value={localSearchQuery}
+							oninput={(e) => applySearchFilter(e.target.value)}
+							class="bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-purple-500 focus:outline-none focus:ring-2 focus:ring-purple-500/20 min-w-[300px] w-full transition-all duration-200 pl-10"
+						>
+						<!-- Search Icon -->
+						<svg class="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m21 21-6-6m2-5a7 7 0 1 1-14 0 7 7 0 0 1 14 0z"></path>
 						</svg>
-					</button>
-				{/if}
+						{#if localSearchQuery}
+							<button
+								onclick={() => { localSearchQuery = ''; applySearchFilter(''); }}
+								class="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-white"
+							>
+								<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+								</svg>
+							</button>
+						{/if}
+					</div>
+				</div>
 			</div>
+
+			<!-- Device Filter Section -->
+			{#if initialLoad || $isLoadingData}
+				<!-- Device filter loading placeholder -->
+				<div class="flex flex-col items-center gap-3 flex-1">
+					<div class="bg-gray-700 rounded-lg px-4 py-2 border border-gray-600 w-48 h-11 placeholder-shimmer"></div>
+					<div class="bg-gray-600 rounded px-2 py-1 w-20 h-6 placeholder-shimmer"></div>
+				</div>
+			{:else if $supportedDevices.length > 0}
+				<div class="flex flex-col items-center gap-3 flex-1">
+					<div class="flex flex-col sm:flex-row items-center gap-3 w-full max-w-md">
+						<!-- Searchable Dropdown -->
+						<div class="relative w-full" id="device-dropdown">
+							<button
+								class="bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-purple-500 focus:outline-none focus:ring-2 focus:ring-purple-500/20 min-w-[300px] w-full transition-all duration-200 flex items-center justify-between"
+								onclick={toggleDeviceDropdown}
+							>
+								<span>{$selectedDevice}</span>
+								<svg class="w-4 h-4 ml-2 transition-transform duration-200" class:rotate-180={showDeviceDropdown} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m19 9-7 7-7-7"></path>
+								</svg>
+							</button>
+							
+							{#if showDeviceDropdown}
+								<div class="absolute z-50 w-full mt-1 bg-gray-700 border border-gray-600 rounded-lg shadow-xl max-h-60 overflow-y-auto">
+									<!-- Search Input -->
+									<div class="p-2 border-b border-gray-600">
+										<input
+											id="device-search-input"
+											type="text"
+											placeholder="Search devices..."
+											bind:value={deviceSearchQuery}
+											class="w-full bg-gray-800 text-white px-3 py-2 rounded border border-gray-600 focus:border-purple-500 focus:outline-none focus:ring-1 focus:ring-purple-500/50 text-sm"
+										>
+									</div>
+									
+									<!-- Device Options -->
+									<div class="max-h-48 overflow-y-auto">
+										{#each filteredDevicesForSearch as device}
+											<button
+												class="w-full text-left px-4 py-2 hover:bg-gray-600 transition-colors duration-150 text-white text-sm"
+												class:bg-purple-600={$selectedDevice === device.name}
+												class:hover:bg-purple-500={$selectedDevice === device.name}
+												onclick={() => handleDeviceFilter(device.name)}
+											>
+												{device.name}
+											</button>
+										{:else}
+											<div class="px-4 py-2 text-gray-400 text-sm">No devices found</div>
+										{/each}
+									</div>
+								</div>
+							{/if}
+						</div>
+					</div>
+				</div>
+			{/if}
 		</div>
+
+		<!-- Search Results Info -->
 		{#if $searchQuery}
 			<div class="text-sm text-gray-400">
 				Found {$searchedApps.length} result{$searchedApps.length === 1 ? '' : 's'} for "{$searchQuery}"
 			</div>
 		{/if}
 	</div>
-	
-	<!-- Device Filter -->
-	{#if initialLoad || $isLoadingData}
-		<!-- Device filter loading placeholder -->
-		<div class="mt-6 mb-8 flex flex-col items-center gap-3">
-			<h3 class="text-lg font-semibold text-white">Filter by Device</h3>
-			<div class="bg-gray-700 rounded-lg px-4 py-2 border border-gray-600 w-48 h-11 placeholder-shimmer"></div>
-			<div class="bg-gray-600 rounded px-2 py-1 w-20 h-6 placeholder-shimmer"></div>
-		</div>
-	{:else if $supportedDevices.length > 0}
-		<div class="mt-6 mb-8 flex flex-col items-center gap-3">
-			<h3 class="text-lg font-semibold text-white">Filter by Device</h3>
-			<div class="flex flex-col sm:flex-row items-center gap-3">
-				<!-- Searchable Dropdown -->
-				<div class="relative" id="device-dropdown">
-					<button
-						class="bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-purple-500 focus:outline-none focus:ring-2 focus:ring-purple-500/20 min-w-[300px] transition-all duration-200 flex items-center justify-between"
-						onclick={toggleDeviceDropdown}
-					>
-						<span>{$selectedDevice}</span>
-						<svg class="w-4 h-4 ml-2 transition-transform duration-200" class:rotate-180={showDeviceDropdown} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m19 9-7 7-7-7"></path>
-						</svg>
-					</button>
-					
-					{#if showDeviceDropdown}
-						<div class="absolute z-50 w-full mt-1 bg-gray-700 border border-gray-600 rounded-lg shadow-xl max-h-60 overflow-y-auto">
-							<!-- Search Input -->
-							<div class="p-2 border-b border-gray-600">
-								<input
-									id="device-search-input"
-									type="text"
-									placeholder="Search devices..."
-									bind:value={deviceSearchQuery}
-									class="w-full bg-gray-800 text-white px-3 py-2 rounded border border-gray-600 focus:border-purple-500 focus:outline-none focus:ring-1 focus:ring-purple-500/50 text-sm"
-								>
-							</div>
-							
-							<!-- Device Options -->
-							<div class="max-h-48 overflow-y-auto">
-								{#each filteredDevicesForSearch as device}
-									<button
-										class="w-full text-left px-4 py-2 hover:bg-gray-600 transition-colors duration-150 text-white text-sm"
-										class:bg-purple-600={$selectedDevice === device.name}
-										class:hover:bg-purple-500={$selectedDevice === device.name}
-										onclick={() => handleDeviceFilter(device.name)}
-									>
-										{device.name}
-									</button>
-								{:else}
-									<div class="px-4 py-2 text-gray-400 text-sm">No devices found</div>
-								{/each}
-							</div>
-						</div>
-					{/if}
-				</div>
-			</div>
-		</div>
-	{/if}
 	
 	{#if initialLoad || $isLoadingData}
 		<!-- Category buttons loading placeholder -->
@@ -542,7 +547,7 @@
 		{#each $searchFilteredCategories as category}
 			<button onclick={() => filter(category.name, category.slug)}>
 				<div
-					class="inline-flex items-center gap-2 sm:gap-3 m-1 rounded-full px-3 sm:px-6 py-2 sm:py-3 text-white transition-all duration-300 ease-in-out hover:scale-105 hover:shadow-2xl border-2"
+					class="inline-flex items-center gap-2 sm:gap-3 m-1 rounded-full px-3 md:px-4 py-2 md:py-2 text-white transition-all duration-300 ease-in-out hover:scale-105 hover:shadow-2xl border-2"
 					style="background-color: {$selectedCategory === category.name ? 'rgb(155, 81, 224)' : 'black'}; border-color: {$selectedCategory === category.name ? 'rgb(128, 51, 199)' : 'rgb(155, 81, 224)'};"
 					onmouseenter={(e) => {
 						if ($selectedCategory !== category.name) {
@@ -558,7 +563,7 @@
 					}}
 				>
 					<!-- Text -->
-					<span class="text-sm sm:text-lg font-semibold tracking-wide">{capitalize(category.name)} ({category.count})</span>
+					<span class="text-sm md:text-base font-semibold tracking-wide">{capitalize(category.name)} ({category.count})</span>
 				</div>
 			</button>
 		{/each}
