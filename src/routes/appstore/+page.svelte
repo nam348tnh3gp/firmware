@@ -640,7 +640,7 @@
 						</div>
 						
 						<!-- App Info -->
-						<div class="p-4">
+						<div class="p-4 lg:pt-6">
 							<h4 class="font-bold text-lg text-white">
 								{app.name}
 								{#if app.category === 'Themes' && app['supported-screen-size']}
@@ -689,7 +689,7 @@
 
 <!-- App Detail Modal -->
 {#if showModal && selectedApp}
-	<div class="fixed inset-0 bg-black bg-opacity-50 flex items-start justify-center z-50 p-2 sm:p-4 pt-32 sm:pt-24">
+	<div class="fixed inset-0 bg-black bg-opacity-50 flex items-start justify-center z-50 p-2 sm:p-4 pt-32 sm:pt-32 lg:pt-32">
 		<div class="bg-gray-800 rounded-lg w-full max-w-xs sm:max-w-md md:max-w-lg lg:max-w-2xl max-h-[80vh] sm:max-h-[80vh] overflow-y-auto">
 			<!-- Modal Header -->
 			<div class="sticky top-0 bg-gray-800 p-3 sm:p-6 border-b border-gray-700">
