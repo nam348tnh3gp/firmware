@@ -60,6 +60,9 @@ export const supportedDevices = writable<Device[]>([]);
 export const selectedDevice = writable<string>('All Devices');
 export const filteredApps = writable<App[]>([]);
 export const filteredCategories = writable<Category[]>([]);
+export const searchQuery = writable<string>('');
+export const searchedApps = writable<App[]>([]);
+export const searchFilteredCategories = writable<Category[]>([]);
 
 // Function to calculate device-filtered category counts
 function calculateFilteredCategories(deviceName: string, deviceScreenSize: string) {
@@ -125,6 +128,55 @@ function isAppCompatibleWithDevice(app: App, deviceName: string, deviceScreenSiz
 	return false;
 }
 
+// Function to apply search filter
+export function applySearchFilter(query: string) {
+	searchQuery.set(query);
+	
+	const currentFilteredApps = get(filteredApps);
+	const currentFilteredCategories = get(filteredCategories);
+	
+	if (query === '') {
+		searchedApps.set(currentFilteredApps);
+		searchFilteredCategories.set(currentFilteredCategories);
+		return;
+	}
+	
+	const lowerQuery = query.toLowerCase();
+	
+	// Filter apps and count categories in a single pass
+	const categoryCount = new Map<string, number>();
+	const filtered: App[] = [];
+	
+	for (const app of currentFilteredApps) {
+		if (app.name.toLowerCase().includes(lowerQuery) ||
+			app.description?.toLowerCase().includes(lowerQuery) ||
+			app.owner?.toLowerCase().includes(lowerQuery)) {
+			filtered.push(app);
+			const categoryKey = app.category.toLowerCase();
+			categoryCount.set(categoryKey, (categoryCount.get(categoryKey) || 0) + 1);
+		}
+	}
+	
+	// Update category counts efficiently
+	const updatedCategories = currentFilteredCategories.map(category => {
+		const newCount = categoryCount.get(category.name.toLowerCase()) || 0;
+		return newCount !== category.count 
+			? { ...category, count: newCount }
+			: category;
+	});
+	
+	searchedApps.set(filtered);
+	searchFilteredCategories.set(updatedCategories);
+}
+
+// Function to initialize search stores with current filtered data
+export function initializeSearch() {
+	const currentFilteredApps = get(filteredApps);
+	const currentFilteredCategories = get(filteredCategories);
+	searchedApps.set(currentFilteredApps);
+	searchFilteredCategories.set(currentFilteredCategories);
+}
+
 // Function to apply device filter to current category apps
 export function applyDeviceFilter(deviceName: string) {
 	selectedDevice.set(deviceName);
@@ -143,6 +195,17 @@ export function applyDeviceFilter(deviceName: string) {
 		.sort((a, b) => a.name.localeCompare(b.name));
 	
 	filteredApps.set(filtered);
+	
+	// Update search stores with the new filtered data
+	const currentSearchQuery = get(searchQuery);
+	if (currentSearchQuery === '') {
+		// If no search active, update search stores with all filtered apps
+		searchedApps.set(filtered);
+		searchFilteredCategories.set(get(filteredCategories));
+	} else {
+		// If search is active, re-apply search with new filtered data
+		applySearchFilter(currentSearchQuery);
+	}
 }
 export async function loadAllData() {
 	try {
