@@ -1,13 +1,28 @@
+// YModem protocol constants
+const CTRL_D = 0x04; // CTRL+D (End of Transmission) - used for cancellation
+const EOT = 0x04; // End of Transmission
+
+export type InstallStage =
+	| 'connecting'
+	| 'getting_info'
+	| 'erasing'
+	| 'writing'
+	| 'verifying'
+	| 'rebooting'
+	| 'error'
+	| 'success';
 
 export interface InstallProgress {
-	stage: 'connecting' | 'uploading' | 'verifying' | 'complete' | 'error';
+	stage: InstallStage;
 	progress: number;
 	message: string;
 	error?: string;
+	speedBps?: number;
 }
 
 export interface AppFile {
 	source: string;
+	sourceFile: string;
 	destination: string;
 }
 
@@ -18,10 +33,7 @@ export class InstallService {
 	private crcAlreadyReceived: boolean = false;
 	private debug: boolean = false;
 	private installEnabled: boolean = false; // Flag to disable install functionality
-
-	constructor(debug: boolean) {
-		this.debug = debug;
-	}
+	private packetSize: number = 128; // Configurable YModem packet size
 
 	/**
 	 * Check if install functionality is enabled
@@ -101,8 +113,7 @@ export class InstallService {
 	private async ensureCommandPrompt(): Promise<void> {
 		if (this.debug) console.log('[Install Service] Ensuring device is at command prompt...');
 		
-		// Simple approach like Python script - just wait for device to settle
-		if (this.debug) console.log('[Install Service] Waiting for device to settle (like Python script)...');
+		if (this.debug) console.log('[Install Service] Waiting for device to settle...');
 		await new Promise(resolve => setTimeout(resolve, 2000));
 		
 		// Send a newline to trigger a prompt display
@@ -192,7 +203,7 @@ export class InstallService {
 
 		if (this.debug) console.log(`[Install Service] Sending command: "${command}"`);
 		
-		// Send command (use \n terminator like Python script)
+		// Send command (use \n terminator)
 		const encoder = new TextEncoder();
 		const commandBytes = encoder.encode(command + '\n');
 		if (this.debug) console.log(`[Install Service] Command bytes: [${Array.from(commandBytes).join(', ')}]`);
@@ -231,7 +242,7 @@ export class InstallService {
 					if (response.includes('Send file using Y-modem protocol')) {
 						if (this.debug) console.log('[Install Service] YModem transfer ready detected');
 						
-						// Check if CRC is mixed in response (matching Python patterns)
+						// Check if CRC is mixed in response
 						const textLines = response.split('\n');
 						const lastLine = textLines[textLines.length - 1];
 						if (lastLine.includes('C') || response.endsWith('C') || response.includes('\nC') || response.includes('C[DEBUG]')) {
@@ -271,7 +282,7 @@ export class InstallService {
 		// Check if we got a meaningful response
 		if (!response || response.trim().length === 0) {
 			if (this.debug) console.error('[Install Service] No response received from device');
-			throw new Error('No response from device - check connection and that device is at command prompt');
+			throw new Error('No response from device - check connection and retry the installation');
 		}
 		
 		return response.trim();
@@ -297,7 +308,7 @@ export class InstallService {
 		if (this.debug) console.log(`[Install Service] Waiting for byte: 0x${expectedByte.toString(16).padStart(2, '0')}`);
 		const startTime = Date.now();
 		
-		// Collect all data like Python script - CRC might be mixed with text
+		// Collect all data - CRC might be mixed with text
 		let allData = new Uint8Array(0);
 		
 		while (Date.now() - startTime < timeoutMs) {
@@ -335,7 +346,7 @@ export class InstallService {
 						}
 					}
 
-					// Also try to decode as text for debugging (like Python script)
+					// Also try to decode as text for debugging
 					try {
 						const decoder = new TextDecoder('utf-8', { fatal: false });
 						const text = decoder.decode(value);
@@ -373,11 +384,11 @@ export class InstallService {
 		return false;
 	}
 
-	private async waitForSingleByteResponse(timeoutMs: number = 5000): Promise<number | null> {
-		if (this.debug) console.log('[Install Service] Waiting for single byte response (ACK/NAK/CAN)...');
+	private async waitForSingleByteResponse(timeoutMs: number = 2500): Promise<number | null> {
+		if (this.debug) console.log('[Install Service] Waiting for single byte response (ACK/NAK/CTRL+D)...');
 		const startTime = Date.now();
 		
-		// Collect all data like Python script - ACK/NAK might be mixed with debug text
+		// Collect all data - ACK/NAK might be mixed with debug text
 		let allData = new Uint8Array(0);
 		
 		while (Date.now() - startTime < timeoutMs) {
@@ -401,20 +412,20 @@ export class InstallService {
 					for (let i = 0; i < allData.length; i++) {
 						const byte = allData[i];
 						
-						// Only return actual protocol bytes (like Python script)
+						// Only return actual protocol bytes
 						if (byte === 0x06) { // ACK
 							if (this.debug) console.log(`[Install Service] Found ACK (0x06) at position ${i} in data stream`);
 							return 0x06;
 						} else if (byte === 0x15) { // NAK  
 							if (this.debug) console.log(`[Install Service] Found NAK (0x15) at position ${i} in data stream`);
 							return 0x15;
-						} else if (byte === 0x18) { // CAN
-							if (this.debug) console.log(`[Install Service] Found CAN (0x18) at position ${i} in data stream`);
-							return 0x18;
+						} else if (byte === 0x04) { // CTRL+D
+							if (this.debug) console.log(`[Install Service] Found CTRL+D (0x04) at position ${i} in data stream`);
+							return 0x04;
 						}
 					}
 
-					// Also try to decode as text for debugging (like Python script)
+					// Also try to decode as text for debugging
 					try {
 						const decoder = new TextDecoder('utf-8', { fatal: false });
 						const text = decoder.decode(value);
@@ -451,25 +462,76 @@ export class InstallService {
 		console.warn(`[Install Service] Timeout waiting for response after ${timeoutMs}ms`);
 		return null;
 	}
+	private async sendFileViaYModemWithRetry(
+		filePath: string,
+		fileBytes: Uint8Array,
+		progressCallback?: (progress: number, speedBps: number) => void
+	): Promise<boolean> {
+		const maxFileRetries = 2; // Try the file transfer a total of 3 times (1 initial + 2 retries)
+		let fileRetries = 0;
+
+		while (fileRetries <= maxFileRetries) {
+			try {
+				if (fileRetries > 0) {
+					console.warn(`[Install Service] File-level retry ${fileRetries}/${maxFileRetries} for "${filePath}"`);
+					
+					// Send CTRL+D sequence to ensure any previous session is cancelled
+					try {
+						if (this.debug) console.log('[Install Service] Sending CTRL+D sequence to cancel any previous transfer...');
+						await this.writer!.write(new Uint8Array([CTRL_D, CTRL_D, CTRL_D, CTRL_D, CTRL_D]));
+						await new Promise(resolve => setTimeout(resolve, 1000));
+					} catch (cancelError) {
+						console.warn('[Install Service] Failed to send pre-retry CTRL+D sequence:', cancelError);
+					}
+				}
+				
+				// Attempt to send the file
+				await this.sendFileViaYModem(filePath, fileBytes, progressCallback);
+				return true; // File sent successfully
+			} catch (error) {
+				console.warn(`[Install Service] Error during YModem transfer for "${filePath}" (attempt ${fileRetries + 1}/${maxFileRetries + 1}):`, error);
+				fileRetries++;
+
+				if (fileRetries <= maxFileRetries) {
+					// Will retry on next iteration - cancellation already handled above
+					if (this.debug) console.log(`[Install Service] Will retry file transfer for "${filePath}" (${fileRetries}/${maxFileRetries})...`);
+					
+					// Additional delay to let device settle after error
+					await new Promise(resolve => setTimeout(resolve, 500));
+				} else {
+					console.error(`[Install Service] File transfer for "${filePath}" failed after ${maxFileRetries + 1} attempts (${maxFileRetries} retries).`);
+					throw error; // Re-throw the error to fail the installation
+				}
+			}
+		}
+		// This should never be reached since we always return or throw in the loop
+		throw new Error(`Unexpected end of retry loop for file: ${filePath}`);
+	}
+
 	private async sendFileViaYModem(
 		filePath: string, 
 		fileBytes: Uint8Array, 
-		progressCallback?: (progress: number) => void
+		progressCallback?: (progress: number, speedBps: number) => void
 	): Promise<boolean> {
 		try {
 			if (this.debug) console.log(`[Install Service] Starting YModem transfer for: "${filePath}"`);
 			if (this.debug) console.log(`[Install Service] File size: ${fileBytes.length} bytes`);
 			
 			// Calculate total blocks needed for progress tracking
-			const blockSize = 128;
+			const blockSize = this.packetSize;
 			const totalBlocks = Math.ceil(fileBytes.length / blockSize);
 			let blocksCompleted = 0;
+			const transferStartTime = Date.now();
+			let bytesSent = 0;
 			
-			const updateProgress = () => {
+			const updateProgress = (isFinal: boolean = false) => {
 				if (progressCallback) {
 					const progress = totalBlocks > 0 ? blocksCompleted / totalBlocks : 0;
-					if (this.debug) console.log(`[Install Service] updateProgress calling callback with: ${progress.toFixed(3)} (blocksCompleted=${blocksCompleted}, totalBlocks=${totalBlocks})`);
-					progressCallback(progress);
+					const elapsedTime = (Date.now() - transferStartTime) / 1000; // in seconds
+					const speedBps = elapsedTime > 0 ? bytesSent / elapsedTime : 0;
+					
+					if (this.debug) console.log(`[Install Service] updateProgress calling callback with: ${progress.toFixed(3)}, speed: ${speedBps.toFixed(0)} B/s`);
+					progressCallback(progress, isFinal ? 0 : speedBps);
 				}
 			};
 			
@@ -487,7 +549,7 @@ export class InstallService {
 
 			if (this.debug) console.log(`[Install Service] YModem command successful`);
 			
-			// Check if CRC was already received in command response (like Python script)
+			// Check if CRC was already received in command response
 			if (this.crcAlreadyReceived) {
 				if (this.debug) console.log('[Install Service] Using CRC request from command response');
 			} else {
@@ -505,7 +567,7 @@ export class InstallService {
 			if (this.debug) console.log('[Install Service] Sending Block 0 (header) with filename and file size');
 			
 			// Create Block 0 data: filename + null + file size + null + padding
-			const block0Data = new Uint8Array(128);
+			const block0Data = new Uint8Array(this.packetSize);
 			let offset = 0;
 			
 			// Extract just the filename from the full path for Block 0
@@ -536,16 +598,13 @@ export class InstallService {
 			if (this.debug) console.log(`[Install Service] Block 0 contains: filename="${filename}", size="${fileSizeStr}"`);
 			
 			// Send Block 0
-			const block0Success = await this.sendBlock(0, block0Data);
-			if (!block0Success) {
-				throw new Error('Failed to send Block 0 (header)');
-			}
+			await this.sendBlock(0, block0Data);
 
 			// Use file bytes directly (no re-encoding)
 			if (this.debug) console.log(`[Install Service] Using ${fileBytes.length} bytes of file data directly`);
 			if (this.debug) console.log(`[Install Service] Will send ${totalBlocks} data blocks of ${blockSize} bytes each`);
 			
-			// Send data blocks (using 128-byte SOH blocks like Python)
+			// Send data blocks (using 128-byte SOH blocks)
 			let blockNum = 1;
 			offset = 0; // Reset offset for file data processing
 			
@@ -569,13 +628,11 @@ export class InstallService {
 				if (this.debug) console.log(`[Install Service] Block ${blockNum} first 16 bytes: [${firstBytes.map(b => `0x${b.toString(16).padStart(2, '0')}`).join(', ')}]`);
 				
 				// Send block using the common sendBlock method
-				const success = await this.sendBlock(blockNum, blockData);
-				if (!success) {
-					throw new Error(`Failed to send block ${blockNum}`);
-				}
+				await this.sendBlock(blockNum, blockData);
 				
 				// Update progress after successful block
 				blocksCompleted++;
+				bytesSent = offset + currentBlockSize;
 				updateProgress();
 				
 				offset += currentBlockSize;
@@ -586,7 +643,7 @@ export class InstallService {
 			if (this.debug) console.log('[Install Service] Sending EOT (End of Transmission)');
 			await this.writer!.write(new Uint8Array([0x04])); // EOT
 			
-			// Wait for final ACK with retries (matching Python)
+			// Wait for final ACK with retries
 			let finalAckReceived = false;
 			let eotRetries = 0;
 			
@@ -609,40 +666,43 @@ export class InstallService {
 				throw new Error('No final ACK received after EOT');
 			}
 
+			// Final progress update to show 100%
+			updateProgress(true);
+
 			if (this.debug) console.log(`[Install Service] YModem transfer completed for: "${filePath}"`);
 			return true;
 		} catch (error) {
 			if (this.debug) console.error(`[Install Service] YModem transfer failed for "${filePath}":`, error);
-			return false;
+			throw error; // Re-throw to trigger file-level retry
 		}
 	}
 
-	private async sendBlock(blockNum: number, data: Uint8Array): Promise<boolean> {
-		const maxRetries = 10;
+	private async sendBlock(blockNum: number, data: Uint8Array): Promise<void> {
+		const maxRetries = 3;
 		let retries = 0;
 		
 		while (retries < maxRetries) {
 			// Build the block
-			const block = new Uint8Array(133); // SOH + block# + ~block# + data + CRC
+			const block = new Uint8Array(3 + this.packetSize + 2); // SOH + block# + ~block# + data + CRC
 			let pos = 0;
 			
-			// SOH header for 128-byte blocks
+			// SOH header for configurable packet size blocks
 			block[pos++] = 0x01; // SOH
 			
 			// Block number and complement
 			block[pos++] = blockNum & 0xFF;
 			block[pos++] = (~blockNum) & 0xFF;
 			
-			// Data payload (128 bytes)
+			// Data payload (configurable packet size)
 			block.set(data, pos);
-			pos += 128;
+			pos += this.packetSize;
 			
 			// Calculate CRC-16 over data only
 			const crc = this.calculateCRC16(data);
 			block[pos++] = (crc >> 8) & 0xFF; // CRC high byte
 			block[pos++] = crc & 0xFF;        // CRC low byte
 			
-			if (this.debug) console.log(`[Install Service] Sending block ${blockNum}: SOH + ${blockNum} + ${(~blockNum) & 0xFF} + 128 bytes + CRC(0x${crc.toString(16).padStart(4, '0')})`);
+			if (this.debug) console.log(`[Install Service] Sending block ${blockNum}: SOH + ${blockNum} + ${(~blockNum) & 0xFF} + ${this.packetSize} bytes + CRC(0x${crc.toString(16).padStart(4, '0')})`);
 			
 			// Send the block
 			await this.writer!.write(block);
@@ -651,7 +711,7 @@ export class InstallService {
 			const response = await this.waitForSingleByteResponse(5000);
 			if (response === 0x06) { // ACK
 				if (this.debug) console.log(`[Install Service] Block ${blockNum} acknowledged`);
-				return true;
+				return; // Success - exit function
 			} else if (response === 0x15) { // NAK
 				retries++;
 				console.warn(`[Install Service] Block ${blockNum} NAK'd, retry ${retries}/${maxRetries}`);
@@ -671,30 +731,31 @@ export class InstallService {
 			}
 		}
 		
-		return false;
+		// If we reach here, all retries have been exhausted
+		throw new Error(`Failed to send block ${blockNum} after ${maxRetries} retries - no valid response received`);
 	}
 
 	private async sendDataBlock(blockNum: number, data: Uint8Array): Promise<void> {
-		const block = new Uint8Array(133); // SOH + block# + ~block# + data + CRC
+		const block = new Uint8Array(3 + this.packetSize + 2); // SOH + block# + ~block# + data + CRC
 		let pos = 0;
 		
-		// SOH header for 128-byte blocks
+		// SOH header for configurable packet size blocks
 		block[pos++] = 0x01; // SOH
 		
 		// Block number and complement
 		block[pos++] = blockNum & 0xFF;
 		block[pos++] = (~blockNum) & 0xFF;
 		
-		// Data payload (128 bytes)
+		// Data payload (configurable packet size)
 		block.set(data, pos);
-		pos += 128;
+		pos += this.packetSize;
 		
 		// Calculate CRC-16 over data only
 		const crc = this.calculateCRC16(data);
 		block[pos++] = (crc >> 8) & 0xFF; // CRC high byte
 		block[pos++] = crc & 0xFF;        // CRC low byte
 		
-		if (this.debug) console.log(`[Install Service] Sending block ${blockNum}: SOH + ${blockNum} + ${(~blockNum) & 0xFF} + 128 bytes + CRC(0x${crc.toString(16).padStart(4, '0')})`);
+		if (this.debug) console.log(`[Install Service] Sending block ${blockNum}: SOH + ${blockNum} + ${(~blockNum) & 0xFF} + ${this.packetSize} bytes + CRC(0x${crc.toString(16).padStart(4, '0')})`);
 		
 		await this.writer!.write(block);
 	}
@@ -778,7 +839,7 @@ export class InstallService {
 				progressCallback({
 					stage: 'uploading',
 					progress: fileStartProgress,
-					message: `Downloading ${file.destination}...`
+					message: `Downloading ${file.sourceFile}...`
 				});
 
 				// Download file content as binary to preserve exact bytes
@@ -796,10 +857,10 @@ export class InstallService {
 				if (this.debug) console.log(`[Install Service] Starting upload to device: "${file.destination}"`);
 				if (this.debug) console.log(`[Install Service] Progress calculation debug: fileStartProgress=${fileStartProgress}, fileEndProgress=${fileEndProgress}, fileProgressRange=${fileProgressRange}`);
 				
-				const success = await this.sendFileViaYModem(
+				const success = await this.sendFileViaYModemWithRetry(
 					file.destination, 
 					fileBytes, 
-					(blockProgress) => {
+					(blockProgress, speedBps) => {
 						// Map block progress (0-1) to this file's allocated progress range
 						const calculatedProgress = fileStartProgress + (fileProgressRange * blockProgress);
 						
@@ -814,16 +875,13 @@ export class InstallService {
 						progressCallback({
 							stage: 'uploading',
 							progress: currentProgress,
-							message: `Uploading ${file.destination} (${Math.round(blockProgress * 100)}%)`
+							message: `Uploading ${file.destination} (${Math.round(blockProgress * 100)}%)`,
+							speedBps: speedBps
 						});
 					}
 				);
 
-				if (!success) {
-					if (this.debug) console.error(`[Install Service] Failed to upload file: "${file.destination}"`);
-					throw new Error(`Failed to upload ${file.destination}`);
-				}
-				
+				// File uploaded successfully - continue to next file
 				// Ensure progress reaches exactly the end percentage for this file
 				progressCallback({
 					stage: 'uploading',
@@ -841,9 +899,10 @@ export class InstallService {
 
 			if (this.debug) console.log(`[Install Service] Installation completed successfully for "${appName}"`);
 			progressCallback({
-				stage: 'complete',
+				stage: 'success',
 				progress: 100,
-				message: `Successfully installed ${appName}!`
+				message: `Successfully installed ${appName}!`,
+				speedBps: 0
 			});
 
 			return true;
@@ -853,7 +912,8 @@ export class InstallService {
 				stage: 'error',
 				progress: 0,
 				message: 'Installation failed',
-				error: error instanceof Error ? error.message : 'Unknown error'
+				error: error instanceof Error ? error.message : 'Unknown error',
+				speedBps: 0
 			});
 			return false;
 		} finally {
@@ -866,5 +926,3 @@ export class InstallService {
 
 // Export singleton instance
 export const installService = new InstallService();
-
-
