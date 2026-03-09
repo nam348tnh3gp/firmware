@@ -61,6 +61,8 @@ public:
     using TFT_eSPI::width;
     using TFT_eSPI::write;
     using TFT_eSPI::writecommand;
+    using TFT_eSPI::setViewport;
+    using TFT_eSPI::resetViewport;
 
 #ifdef TOUCH_CS
 #if !defined(TFT_PARALLEL_8_BIT) && !defined(RP2040_PIO_INTERFACE) && !defined(TFT_PARALLEL_16_BIT)
