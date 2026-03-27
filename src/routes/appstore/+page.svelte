@@ -154,6 +154,14 @@
 		}
 	});
 
+	// Clear search when category changes
+	$effect(() => {
+		// Reset search when category or device filter changes
+		if ($selectedCategory || $selectedDevice) {
+			// Don't automatically clear search - let user keep their search active
+		}
+	});
+
 	// Toggle dropdown visibility
 	function toggleDeviceDropdown() {
 		showDeviceDropdown = !showDeviceDropdown;
@@ -243,6 +251,12 @@
 		isDownloading = true;
 		downloadError = '';
 		downloadProgress = 'Initializing download...';
+		
+		// Reset install-related states when starting download
+		showInstallPopup = false;
+		installProgress = null;
+		showInstallComplete = false;
+		isInstalling = false;
 
 		// Reset install-related states when starting download
 		showInstallPopup = false;
