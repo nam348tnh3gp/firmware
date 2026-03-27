@@ -27,7 +27,7 @@
 	import { onMount } from 'svelte';
 	import { onDestroy } from 'svelte';
 	import JSZip from 'jszip';
-	import { installService, type InstallProgress } from '$lib/install-service';
+	import installService, { type InstallProgress } from '$lib/install-service';
 
 	const components = import.meta.glob('$lib/apps/*.md', { eager: true });
 
@@ -51,6 +51,7 @@
 	let isInstalling = $state(false);
 	let installProgress = $state<InstallProgress | null>(null);
 	let showInstallComplete = $state(false);
+	let showCancelConfirm = $state(false);
 	// Searchable dropdown state
 	let showDeviceDropdown = $state(false);
 	let deviceSearchQuery = $state('');
@@ -67,6 +68,9 @@
 	onMount(async () => {
 		// Check URL parameters for install enablement
 		const urlParams = new URLSearchParams(window.location.search);
+		if (urlParams.get('debug') === 'true') {
+			installService.setDebugEnabled(true);
+		}
 		if (urlParams.get('installEnabled') === 'true') {
 			installService.setInstallEnabled(true);
 		}
@@ -213,8 +217,12 @@
 	}
 
 	function closeModal() {
-		showModal = false;
-		selectedApp = null;
+		if (isInstalling) {
+			showCancelConfirm = true;
+		} else {
+			showModal = false;
+			selectedApp = null;
+		}
 	}
 
 	// Format supported devices for display
@@ -792,6 +800,32 @@
 								Download
 							{/if}
 						</button>
+					</div>
+				{/if}
+
+				<!-- Cancel Install Confirmation -->
+				{#if showCancelConfirm}
+					<div class="mt-6 flex flex-col items-center justify-center rounded-lg border border-red-600 bg-red-900 p-4">
+						<p class="text-center text-sm font-medium text-red-200">An installation is in progress. Are you sure you want to cancel?</p>
+						<div class="mt-4 flex gap-4">
+							<button
+								class="rounded-lg bg-red-700 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-red-800"
+								onclick={() => {
+									installService.cancelInstall();
+									showCancelConfirm = false;
+									showModal = false;
+									selectedApp = null;
+								}}
+							>
+								Yes, Cancel
+							</button>
+							<button
+								class="rounded-lg bg-gray-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-gray-700"
+								onclick={() => (showCancelConfirm = false)}
+							>
+								No, Continue
+							</button>
+						</div>
 					</div>
 				{/if}
 
