@@ -4,9 +4,7 @@
 	import {
 		current_page,
 		Page,
-		categories,
 		loadAllData,
-		categoryApps,
 		isLoadingData,
 		selectedCategory,
 		filterAppsForCategory,
@@ -15,7 +13,6 @@
 		selectedDevice,
 		filteredApps,
 		applyDeviceFilter,
-		filteredCategories,
 		searchQuery,
 		searchedApps,
 		searchFilteredCategories,
@@ -25,7 +22,6 @@
 	import AttentionBanner from '$lib/components/AttentionBanner.svelte';
 	import InstallationBanner from '$lib/components/InstallationBanner.svelte';
 	import { onMount } from 'svelte';
-	import { onDestroy } from 'svelte';
 	import JSZip from 'jszip';
 	import installService, { type InstallProgress } from '$lib/install-service';
 
@@ -35,7 +31,25 @@
 
 	let applications = $state(Object.entries(components));
 	// Modal state for app details
-	let selectedApp = $state<any>(null);
+	// Define the App type based on your app object structure
+	type App = {
+		name: string;
+		slug: string;
+		category: string;
+		version: string;
+		description: string;
+		owner: string;
+		repo: string;
+		commit: string;
+		path?: string;
+		files?: Array<string | { source: string; destination?: string }>;
+		'supported-screen-size'?: string;
+		'supported-devices'?: string | string[];
+		lastUpdated: number;
+		// Add any other properties as needed
+	};
+
+	let selectedApp = $state<App | null>(null);
 	let showModal = $state(false);
 	// Initial loading state to prevent blank appearance
 	let initialLoad = $state(true);
@@ -50,7 +64,6 @@
 	// Install state
 	let isInstalling = $state(false);
 	let installProgress = $state<InstallProgress | null>(null);
-	let showInstallComplete = $state(false);
 	let showCancelConfirm = $state(false);
 	// Searchable dropdown state
 	let showDeviceDropdown = $state(false);
@@ -221,7 +234,6 @@
 		showDownloadComplete = false;
 		isInstalling = false;
 		installProgress = null;
-		showInstallComplete = false;
 	}
 
 	function closeModal() {
@@ -255,13 +267,11 @@
 		// Reset install-related states when starting download
 		showInstallPopup = false;
 		installProgress = null;
-		showInstallComplete = false;
 		isInstalling = false;
 
 		// Reset install-related states when starting download
 		showInstallPopup = false;
 		installProgress = null;
-		showInstallComplete = false;
 		isInstalling = false;
 
 		try {
@@ -375,7 +385,9 @@
 			showDownloadComplete = true;
 		} catch (error) {
 			console.error('Download failed:', error);
-			downloadError = error.message || 'Failed to download files';
+			downloadError = (error && typeof error === 'object' && 'message' in error)
+				? (error as { message: string }).message
+				: 'Failed to download files';
 		} finally {
 			isDownloading = false;
 		}
@@ -402,7 +414,6 @@
 
 		isInstalling = true;
 		installProgress = null;
-		showInstallComplete = false;
 
 		// Reset download-related states when starting install
 		isDownloading = false;
@@ -453,15 +464,12 @@
 			});
 		}
 
-		const success = await installService.installApp(app.name, appFiles, (progress) => {
+		await installService.installApp(app.name, appFiles, (progress) => {
 			installProgress = progress;
 		});
 
 		isInstalling = false;
 
-		if (success) {
-			showInstallComplete = true;
-		}
 	}
 </script>
 
@@ -481,7 +489,7 @@
 							type="text"
 							placeholder="Search..."
 							bind:value={localSearchQuery}
-							oninput={(e) => applySearchFilter(e.target.value)}
+							oninput={(e) => { if (e.target) applySearchFilter((e.target as HTMLInputElement).value); }}
 							class="w-full min-w-[300px] rounded-lg border border-gray-600 bg-gray-700 px-4 py-2 pl-10 text-white transition-all duration-200 focus:border-purple-500 focus:ring-2 focus:ring-purple-500/20 focus:outline-none"
 						/>
 						<!-- Search Icon -->
