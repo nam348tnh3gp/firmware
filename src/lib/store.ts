@@ -7,7 +7,17 @@ export enum Page {
 }
 
 import { writable, get } from 'svelte/store';
+import { InstallService, type InstallProgress } from './install-service';
+
 export const current_page = writable(Page.Home);
+
+export const installService = new InstallService();
+
+export const installProgress = writable<InstallProgress>({
+	stage: 'success',
+	progress: 0,
+	message: ''
+});
 
 // Categories store
 interface App {
