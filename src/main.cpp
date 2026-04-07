@@ -1,558 +1,244 @@
-#include "core/main_menu.h"
-#include <globals.h>
-
-#include "core/powerSave.h"
-#include "core/serial_commands/cli.h"
-#include "core/utils.h"
-#include "current_year.h"
-#include "esp32-hal-psram.h"
-#include "esp_task_wdt.h"
-#include "esp_wifi.h"
-#include <functional>
-#include <string>
-#include <vector>
-io_expander ioExpander;
-BruceConfig bruceConfig;
-BruceConfigPins bruceConfigPins;
-
-SerialCli serialCli;
-USBSerial USBserial;
-SerialDevice *serialDevice = &USBserial;
-
-StartupApp startupApp;
-String startupAppJSInterpreterFile = "";
-
-MainMenu mainMenu;
-SPIClass sdcardSPI;
-#ifdef USE_HSPI_PORT
-#ifndef VSPI
-#define VSPI FSPI
-#endif
-SPIClass CC_NRF_SPI(VSPI);
-#else
-SPIClass CC_NRF_SPI(HSPI);
-#endif
-
-// Navigation Variables
-volatile bool NextPress = false;
-volatile bool PrevPress = false;
-volatile bool UpPress = false;
-volatile bool DownPress = false;
-volatile bool SelPress = false;
-volatile bool EscPress = false;
-volatile bool AnyKeyPress = false;
-volatile bool NextPagePress = false;
-volatile bool PrevPagePress = false;
-volatile bool LongPress = false;
-volatile bool SerialCmdPress = false;
-volatile int forceMenuOption = -1;
-volatile uint8_t menuOptionType = 0;
-String menuOptionLabel = "";
-#ifdef HAS_ENCODER_LED
-volatile int EncoderLedChange = 0;
-#endif
-
-TouchPoint touchPoint;
-
-keyStroke KeyStroke;
-
-TaskHandle_t xHandle;
-void __attribute__((weak)) taskInputHandler(void *parameter) {
-    auto timer = millis();
-    while (true) {
-        checkPowerSaveTime();
-        // Sometimes this task run 2 or more times before looptask,
-        // and navigation gets stuck, the idea here is run the input detection
-        // if AnyKeyPress is false, or rerun if it was not renewed within 75ms (arbitrary)
-        // because AnyKeyPress will be true if didn´t passed through a check(bool var)
-        if (!AnyKeyPress || millis() - timer > 75) {
-            NextPress = false;
-            PrevPress = false;
-            UpPress = false;
-            DownPress = false;
-            SelPress = false;
-            EscPress = false;
-            AnyKeyPress = false;
-            SerialCmdPress = false;
-            NextPagePress = false;
-            PrevPagePress = false;
-            touchPoint.pressed = false;
-            touchPoint.Clear();
-#ifndef USE_TFT_eSPI_TOUCH
-            InputHandler();
-#endif
-            timer = millis();
-        }
-        vTaskDelay(pdMS_TO_TICKS(10));
-    }
-}
-// Public Globals Variables
-unsigned long previousMillis = millis();
-int prog_handler; // 0 - Flash, 1 - LittleFS, 3 - Download
-String cachedPassword = "";
-int8_t interpreter_state = -1;
-bool sdcardMounted = false;
-bool gpsConnected = false;
-
-// wifi globals
-// TODO put in a namespace
-bool wifiConnected = false;
-bool isWebUIActive = false;
-String wifiIP;
-
-bool BLEConnected = false;
-bool returnToMenu;
-bool isSleeping = false;
-bool isScreenOff = false;
-bool dimmer = false;
-char timeStr[16];
-time_t localTime;
-struct tm *timeInfo;
-#if defined(HAS_RTC)
-#if defined(HAS_RTC_PCF85063A)
-pcf85063_RTC _rtc;
-#else
-cplus_RTC _rtc;
-#endif
-RTC_TimeTypeDef _time;
-RTC_DateTypeDef _date;
-bool clock_set = true;
-#else
-ESP32Time rtc;
-bool clock_set = false;
-#endif
-
-std::vector<Option> options;
-// Protected global variables
-#if defined(HAS_SCREEN)
-tft_logger tft = tft_logger(); // Invoke custom library
-tft_sprite sprite = tft_sprite(&tft);
-tft_sprite draw = tft_sprite(&tft);
-volatile int tftWidth = TFT_HEIGHT;
-#ifdef HAS_TOUCH
-volatile int tftHeight =
-    TFT_WIDTH - 20; // 20px to draw the TouchFooter(), were the btns are being read in touch devices.
-#else
-volatile int tftHeight = TFT_WIDTH;
-#endif
-#else
-tft_logger tft;
-SerialDisplayClass &sprite = tft;
-SerialDisplayClass &draw = tft;
-volatile int tftWidth = VECTOR_DISPLAY_DEFAULT_HEIGHT;
-volatile int tftHeight = VECTOR_DISPLAY_DEFAULT_WIDTH;
-#endif
-
-#include "core/display.h"
-#include "core/led_control.h"
-#include "core/mykeyboard.h"
-#include "core/sd_functions.h"
-#include "core/serialcmds.h"
-#include "core/settings.h"
-#include "core/wifi/webInterface.h"
-#include "core/wifi/wifi_common.h"
-#include "modules/bjs_interpreter/interpreter.h" // for JavaScript interpreter
-#include "modules/others/audio.h"                // for playAudioFile
-#include "modules/rf/rf_utils.h"                 // for initCC1101once
+#include <Arduino.h>
+#include <SPI.h>
 #include <Wire.h>
+#include "pins_config.h"
+#include "drivers/display_st7789.h"
+#include "drivers/sdcard_manager.h"
+#include "drivers/nrf24_bruce.h"
+#include "drivers/nfc_pn532.h"
+#include "drivers/ir_controller.h"
+#include "modules/keypad_handler.h"
 
-/*********************************************************************
- **  Function: begin_storage
- **  Config LittleFS and SD storage
- *********************************************************************/
-void begin_storage() {
-    if (!LittleFS.begin(true)) { LittleFS.format(), LittleFS.begin(); }
-    bool checkFS = setupSdCard();
-    bruceConfig.fromFile(checkFS);
-    bruceConfigPins.fromFile(checkFS);
+// ==================== BIẾN TOÀN CỤC ====================
+HardwareSerial MasterSerial(1);  // UART1 cho giao tiếp với C5
+DisplayST7789 display;
+SDCardManager sdCard;
+NRF24Bruce nrf24;
+NFCPN532 nfc;
+IRController ir;
+KeypadHandler keypad;
+
+// Timer cho các tác vụ
+hw_timer_t* timer = NULL;
+volatile bool flag_scan_nrf = false;
+volatile bool flag_read_nfc = false;
+
+// ==================== INTERRUPT TIMER ====================
+void IRAM_ATTR onTimer() {
+    static uint8_t counter = 0;
+    counter++;
+    if (counter % 10 == 0) flag_scan_nrf = true;   // Mỗi 1 giây (100ms * 10)
+    if (counter % 50 == 0) flag_read_nfc = true;   // Mỗi 5 giây
 }
 
-/*********************************************************************
- **  Function: _setup_gpio()
- **  Sets up a weak (empty) function to be replaced by /ports/* /interface.h
- *********************************************************************/
-void _setup_gpio() __attribute__((weak));
-void _setup_gpio() {}
-
-/*********************************************************************
- **  Function: _post_setup_gpio()
- **  Sets up a weak (empty) function to be replaced by /ports/* /interface.h
- *********************************************************************/
-void _post_setup_gpio() __attribute__((weak));
-void _post_setup_gpio() {}
-
-/*********************************************************************
- **  Function: setup_gpio
- **  Setup GPIO pins
- *********************************************************************/
-void setup_gpio() {
-
-    // init setup from /ports/*/interface.h
-    _setup_gpio();
-
-    // Smoochiee v2 uses a AW9325 tro control GPS, MIC, Vibro and CC1101 RX/TX powerlines
-    ioExpander.init(IO_EXPANDER_ADDRESS, &Wire);
-
-#if TFT_MOSI > 0
-    if (bruceConfigPins.CC1101_bus.mosi == (gpio_num_t)TFT_MOSI)
-        initCC1101once(&tft.getSPIinstance()); // (T_EMBED), CORE2 and others
-    else
-#endif
-        if (bruceConfigPins.CC1101_bus.mosi == bruceConfigPins.SDCARD_bus.mosi)
-        initCC1101once(&sdcardSPI); // (ARDUINO_M5STACK_CARDPUTER) and (ESP32S3DEVKITC1) and devices that
-                                    // share CC1101 pin with only SDCard
-    else initCC1101once(NULL);
-    // (ARDUINO_M5STICK_C_PLUS) || (ARDUINO_M5STICK_C_PLUS2) and others that doesn´t share SPI with
-    // other devices (need to change it when Bruce board comes to shore)
-}
-
-/*********************************************************************
- **  Function: begin_tft
- **  Config tft
- *********************************************************************/
-void begin_tft() {
-    tft.setRotation(bruceConfigPins.rotation); // sometimes it misses the first command
-    tft.invertDisplay(bruceConfig.colorInverted);
-    tft.setRotation(bruceConfigPins.rotation);
-    tftWidth = tft.width();
-#ifdef HAS_TOUCH
-    tftHeight = tft.height() - 20;
-#else
-    tftHeight = tft.height();
-#endif
-    resetTftDisplay();
-    setBrightness(bruceConfig.bright, false);
-}
-
-/*********************************************************************
- **  Function: boot_screen
- **  Draw boot screen
- *********************************************************************/
-void boot_screen() {
-    tft.setTextColor(bruceConfig.priColor, bruceConfig.bgColor);
-    tft.setTextSize(FM);
-    tft.drawPixel(0, 0, bruceConfig.bgColor);
-    tft.drawCentreString("Bruce", tftWidth / 2, 10, 1);
-    tft.setTextSize(FP);
-    tft.drawCentreString(BRUCE_VERSION, tftWidth / 2, 25, 1);
-    tft.setTextSize(FM);
-    tft.drawCentreString(
-        "PREDATORY FIRMWARE", tftWidth / 2, tftHeight + 2, 1
-    ); // will draw outside the screen on non touch devices
-}
-
-/*********************************************************************
- **  Function: boot_screen_anim
- **  Draw boot screen
- *********************************************************************/
-void boot_screen_anim() {
-    boot_screen();
-    int i = millis();
-    // checks for boot.jpg in SD and LittleFS for customization
-    int boot_img = 0;
-    bool drawn = false;
-    if (sdcardMounted) {
-        if (SD.exists("/boot.jpg")) boot_img = 1;
-        else if (SD.exists("/boot.gif")) boot_img = 3;
-    }
-    if (boot_img == 0 && LittleFS.exists("/boot.jpg")) boot_img = 2;
-    else if (boot_img == 0 && LittleFS.exists("/boot.gif")) boot_img = 4;
-    if (bruceConfig.theme.boot_img) boot_img = 5; // override others
-
-    tft.drawPixel(0, 0, 0);       // Forces back communication with TFT, to avoid ghosting
-                                  // Start image loop
-    while (millis() < i + 7000) { // boot image lasts for 5 secs
-        if ((millis() - i > 2000) && !drawn) {
-            tft.fillRect(0, 45, tftWidth, tftHeight - 45, bruceConfig.bgColor);
-            if (boot_img > 0 && !drawn) {
-                tft.fillScreen(bruceConfig.bgColor);
-                if (boot_img == 5) {
-                    drawImg(
-                        *bruceConfig.themeFS(),
-                        bruceConfig.getThemeItemImg(bruceConfig.theme.paths.boot_img),
-                        0,
-                        0,
-                        true,
-                        3600
-                    );
-                    Serial.println("Image from SD theme");
-                } else if (boot_img == 1) {
-                    drawImg(SD, "/boot.jpg", 0, 0, true);
-                    Serial.println("Image from SD");
-                } else if (boot_img == 2) {
-                    drawImg(LittleFS, "/boot.jpg", 0, 0, true);
-                    Serial.println("Image from LittleFS");
-                } else if (boot_img == 3) {
-                    drawImg(SD, "/boot.gif", 0, 0, true, 3600);
-                    Serial.println("Image from SD");
-                } else if (boot_img == 4) {
-                    drawImg(LittleFS, "/boot.gif", 0, 0, true, 3600);
-                    Serial.println("Image from LittleFS");
-                }
-                tft.drawPixel(0, 0, 0); // Forces back communication with TFT, to avoid ghosting
-            }
-            drawn = true;
-        }
-#if !defined(LITE_VERSION)
-        if (!boot_img && (millis() - i > 2200) && (millis() - i) < 2700)
-            tft.drawRect(2 * tftWidth / 3, tftHeight / 2, 2, 2, bruceConfig.priColor);
-        if (!boot_img && (millis() - i > 2700) && (millis() - i) < 2900)
-            tft.fillRect(0, 45, tftWidth, tftHeight - 45, bruceConfig.bgColor);
-        if (!boot_img && (millis() - i > 2900) && (millis() - i) < 3400)
-            tft.drawXBitmap(
-                2 * tftWidth / 3 - 30,
-                5 + tftHeight / 2,
-                bruce_small_bits,
-                bruce_small_width,
-                bruce_small_height,
-                bruceConfig.bgColor,
-                bruceConfig.priColor
-            );
-        if (!boot_img && (millis() - i > 3400) && (millis() - i) < 3600) tft.fillScreen(bruceConfig.bgColor);
-        if (!boot_img && (millis() - i > 3600))
-            tft.drawXBitmap(
-                (tftWidth - 238) / 2,
-                (tftHeight - 133) / 2,
-                bits,
-                bits_width,
-                bits_height,
-                bruceConfig.bgColor,
-                bruceConfig.priColor
-            );
-#endif
-        if (check(AnyKeyPress)) // If any key or M5 key is pressed, it'll jump the boot screen
-        {
-            tft.fillScreen(bruceConfig.bgColor);
-            delay(10);
-            return;
-        }
-    }
-
-    // Clear splashscreen
-    tft.fillScreen(bruceConfig.bgColor);
-}
-
-/*********************************************************************
- **  Function: init_clock
- **  Clock initialisation for propper display in menu
- *********************************************************************/
-void init_clock() {
-#if defined(HAS_RTC)
-    _rtc.begin();
-#if defined(HAS_RTC_BM8563)
-    _rtc.GetBm8563Time();
-#endif
-#if defined(HAS_RTC_PCF85063A)
-    _rtc.GetPcf85063Time();
-#endif
-    _rtc.GetTime(&_time);
-    _rtc.GetDate(&_date);
-
-    struct tm timeinfo = {};
-    timeinfo.tm_sec = _time.Seconds;
-    timeinfo.tm_min = _time.Minutes;
-    timeinfo.tm_hour = _time.Hours;
-    timeinfo.tm_mday = _date.Date;
-    timeinfo.tm_mon = _date.Month > 0 ? _date.Month - 1 : 0;
-    timeinfo.tm_year = _date.Year >= 1900 ? _date.Year - 1900 : 0;
-    time_t epoch = mktime(&timeinfo);
-    struct timeval tv = {.tv_sec = epoch};
-    settimeofday(&tv, nullptr);
-#else
-    struct tm timeinfo = {};
-    timeinfo.tm_year = CURRENT_YEAR - 1900;
-    timeinfo.tm_mon = 0x05;
-    timeinfo.tm_mday = 0x14;
-    time_t epoch = mktime(&timeinfo);
-    rtc.setTime(epoch);
-    clock_set = true;
-    struct timeval tv = {.tv_sec = epoch};
-    settimeofday(&tv, nullptr);
-#endif
-}
-
-/*********************************************************************
- **  Function: init_led
- **  Led initialisation
- *********************************************************************/
-void init_led() {
-#ifdef HAS_RGB_LED
-    beginLed();
-#endif
-}
-
-/*********************************************************************
- **  Function: startup_sound
- **  Play sound or tone depending on device hardware
- *********************************************************************/
-void startup_sound() {
-    if (bruceConfig.soundEnabled == 0) return; // if sound is disabled, do not play sound
-#if !defined(LITE_VERSION)
-#if defined(BUZZ_PIN)
-    // Bip M5 just because it can. Does not bip if splashscreen is bypassed
-    _tone(5000, 50);
-    delay(200);
-    _tone(5000, 50);
-    /*  2fix: menu infinite loop */
-#elif defined(HAS_NS4168_SPKR)
-    // play a boot sound
-    if (bruceConfig.theme.boot_sound) {
-        playAudioFile(bruceConfig.themeFS(), bruceConfig.getThemeItemImg(bruceConfig.theme.paths.boot_sound));
-    } else if (SD.exists("/boot.wav")) {
-        playAudioFile(&SD, "/boot.wav");
-    } else if (LittleFS.exists("/boot.wav")) {
-        playAudioFile(&LittleFS, "/boot.wav");
-    }
-#endif
-#endif
-}
-
-/*********************************************************************
- **  Function: setup
- **  Where the devices are started and variables set
- *********************************************************************/
+// ==================== KHỞI TẠO ====================
 void setup() {
-    Serial.setRxBufferSize(
-        SAFE_STACK_BUFFER_SIZE / 4
-    ); // Must be invoked before Serial.begin(). Default is 256 chars
     Serial.begin(115200);
-
-    log_d("Total heap: %d", ESP.getHeapSize());
-    log_d("Free heap: %d", ESP.getFreeHeap());
-    if (psramInit()) log_d("PSRAM Started");
-    if (psramFound()) log_d("PSRAM Found");
-    else log_d("PSRAM Not Found");
-    log_d("Total PSRAM: %d", ESP.getPsramSize());
-    log_d("Free PSRAM: %d", ESP.getFreePsram());
-
-    // declare variables
-    prog_handler = 0;
-    sdcardMounted = false;
-    wifiConnected = false;
-    BLEConnected = false;
-    bruceConfig.bright = 100; // theres is no value yet
-    bruceConfigPins.rotation = ROTATION;
-    setup_gpio();
-#if defined(HAS_SCREEN)
-    tft.init();
-    tft.setRotation(bruceConfigPins.rotation);
-    tft.fillScreen(TFT_BLACK);
-    // bruceConfig is not read yet.. just to show something on screen due to long boot time
-    tft.setTextColor(TFT_PURPLE, TFT_BLACK);
-    tft.drawCentreString("Booting", tft.width() / 2, tft.height() / 2, 1);
-#else
-    tft.begin();
-#endif
-    begin_storage();
-    begin_tft();
-    init_clock();
-    init_led();
-
-    options.reserve(20); // preallocate some options space to avoid fragmentation
-
-    // Set WiFi country to avoid warnings and ensure max power
-    const wifi_country_t country = {
-        .cc = "US",
-        .schan = 1,
-        .nchan = 14,
-#ifdef CONFIG_ESP_PHY_MAX_TX_POWER
-        .max_tx_power = CONFIG_ESP_PHY_MAX_TX_POWER, // 20
-#endif
-        .policy = WIFI_COUNTRY_POLICY_MANUAL
-    };
-
-    esp_wifi_set_max_tx_power(80); // 80 translates to 20dBm
-    esp_wifi_set_country(&country);
-
-    // Some GPIO Settings (such as CYD's brightness control must be set after tft and sdcard)
-    _post_setup_gpio();
-    // end of post gpio begin
-
-    // #ifndef USE_TFT_eSPI_TOUCH
-    // This task keeps running all the time, will never stop
-    xTaskCreate(
-        taskInputHandler,              // Task function
-        "InputHandler",                // Task Name
-        INPUT_HANDLER_TASK_STACK_SIZE, // Stack size
-        NULL,                          // Task parameters
-        2,                             // Task priority (0 to 3), loopTask has priority 2.
-        &xHandle                       // Task handle (not used)
-    );
-    // #endif
-#if defined(HAS_SCREEN)
-    bruceConfig.openThemeFile(bruceConfig.themeFS(), bruceConfig.themePath, false);
-    if (!bruceConfig.instantBoot) {
-        boot_screen_anim();
-        startup_sound();
+    Serial.println("\n\n=== BRUCE FIRMWARE - ESP32-S3 MASTER ===\n");
+    
+    // 1. Khởi tạo giao tiếp với C5 Slave
+    MasterSerial.begin(UART_BAUDRATE, SERIAL_8N1, UART_MASTER_RX, UART_MASTER_TX);
+    Serial.println("[OK] UART với ESP32-C5 đã sẵn sàng");
+    
+    // 2. Màn hình ST7789
+    if (display.init(TFT_MOSI, TFT_SCLK, TFT_CS, TFT_DC, TFT_RST)) {
+        display.showSplash();
+        Serial.println("[OK] Màn hình ST7789 khởi tạo thành công");
+    } else {
+        Serial.println("[ERROR] Màn hình ST7789 khởi tạo thất bại");
     }
-    if (bruceConfig.wifiAtStartup) {
-        log_i("Loading Wifi at Startup");
-        xTaskCreate(
-            wifiConnectTask,   // Task function
-            "wifiConnectTask", // Task Name
-            4096,              // Stack size
-            NULL,              // Task parameters
-            2,                 // Task priority (0 to 3), loopTask has priority 2.
-            NULL               // Task handle (not used)
-        );
+    
+    // 3. Thẻ nhớ SD
+    if (sdCard.init(SD_CS, SD_MOSI, SD_MISO, SD_SCLK)) {
+        Serial.println("[OK] Thẻ nhớ SD đã sẵn sàng");
+        sdCard.listFiles("/");
+    } else {
+        Serial.println("[WARN] Không tìm thấy thẻ nhớ SD");
     }
-#endif
-    //  start a task to handle serial commands while the webui is running
-    startSerialCommandsHandlerTask(true);
+    
+    // 4. NRF24L01
+    if (nrf24.init(NRF_CSN, NRF_CE, NRF_MOSI, NRF_MISO, NRF_SCK)) {
+        Serial.println("[OK] Module NRF24L01 đã sẵn sàng");
+        nrf24.setChannel(100);
+        nrf24.setDataRate(RF24_250KBPS);
+    } else {
+        Serial.println("[ERROR] NRF24L01 không phản hồi");
+    }
+    
+    // 5. PN532 NFC
+    Wire.begin(PN532_SDA, PN532_SCL);
+    if (nfc.init(&Wire, PN532_IRQ, PN532_RESET)) {
+        Serial.println("[OK] Module NFC PN532 đã sẵn sàng");
+        nfc.setPassiveActivationRetries(0xFF);
+    } else {
+        Serial.println("[ERROR] PN532 không phản hồi");
+    }
+    
+    // 6. IR (Hồng ngoại)
+    ir.init(IR_TX, IR_RX);
+    Serial.println("[OK] Hồng ngoại IR đã sẵn sàng");
+    
+    // 7. Phím điều hướng
+    keypad.init(KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT, KEY_CENTER);
+    Serial.println("[OK] Phím điều hướng 5-way đã sẵn sàng");
+    
+    // 8. Timer ngắt 100ms
+    timer = timerBegin(0, 80, true);  // Timer 0, prescaler 80 (1us tick)
+    timerAttachInterrupt(timer, &onTimer, true);
+    timerAlarmWrite(timer, 100000, true);  // 100ms
+    timerAlarmEnable(timer);
+    
+    // Gửi tín hiệu sẵn sàng cho C5
+    MasterSerial.println("MASTER_READY");
+    
+    Serial.println("\n=== HỆ THỐNG ĐÃ SẴN SÀNG ===\n");
+    display.showReady();
+}
 
-    wakeUpScreen();
-    if (bruceConfig.startupApp != "" && !startupApp.startApp(bruceConfig.startupApp)) {
-        bruceConfig.setStartupApp("");
+// ==================== VÒNG LẶP CHÍNH ====================
+void loop() {
+    // 1. Xử lý phím bấm
+    KeyEvent event = keypad.getEvent();
+    if (event.pressed) {
+        handleKeyPress(event.key);
+    }
+    
+    // 2. Quét NRF24 (định kỳ)
+    if (flag_scan_nrf) {
+        flag_scan_nrf = false;
+        scanNRF24Devices();
+    }
+    
+    // 3. Đọc NFC (định kỳ)
+    if (flag_read_nfc) {
+        flag_read_nfc = false;
+        readNFCTag();
+    }
+    
+    // 4. Nhận dữ liệu từ C5 Slave
+    if (MasterSerial.available()) {
+        String data = MasterSerial.readStringUntil('\n');
+        processSlaveData(data);
+    }
+    
+    // 5. Cập nhật màn hình
+    display.update();
+    
+    delay(10);
+}
+
+// ==================== XỬ LÝ SỰ KIỆN PHÍM ====================
+void handleKeyPress(int key) {
+    switch(key) {
+        case KEY_UP:
+            Serial.println("Phím UP");
+            display.showMessage("UP Pressed");
+            MasterSerial.println("CMD:UP");
+            break;
+        case KEY_DOWN:
+            Serial.println("Phím DOWN");
+            display.showMessage("DOWN Pressed");
+            MasterSerial.println("CMD:DOWN");
+            break;
+        case KEY_LEFT:
+            Serial.println("Phím LEFT");
+            display.showMessage("LEFT Pressed");
+            break;
+        case KEY_RIGHT:
+            Serial.println("Phím RIGHT");
+            display.showMessage("RIGHT Pressed");
+            break;
+        case KEY_CENTER:
+            Serial.println("Phím CENTER");
+            display.showMessage("CENTER Pressed - Scanning");
+            performScan();
+            break;
     }
 }
 
-/**********************************************************************
- **  Function: loop
- **  Main loop
- **********************************************************************/
-#if defined(HAS_SCREEN)
-void loop() {
-#if !defined(LITE_VERSION) && !defined(DISABLE_INTERPRETER)
-    if (interpreter_state > 0) {
-        vTaskDelay(pdMS_TO_TICKS(10));
-        interpreter_state = 2;
-        Serial.println("Entering interpreter...");
-        while (interpreter_state > 0) { vTaskDelay(pdMS_TO_TICKS(500)); }
-        if (interpreter_state == 0) {
-            Serial.println("Interpreter put to background.");
-        } else {
-            Serial.println("Exiting interpreter...");
+// ==================== QUÉT NRF24 ====================
+void scanNRF24Devices() {
+    static uint8_t channel = 0;
+    uint8_t rxAddr[6] = {0xE7, 0xE7, 0xE7, 0xE7, 0xE7};
+    
+    nrf24.setChannel(channel);
+    nrf24.openReadingPipe(1, rxAddr);
+    nrf24.startListening();
+    
+    delay(2);
+    
+    if (nrf24.available()) {
+        char buffer[32];
+        nrf24.read(&buffer, sizeof(buffer));
+        Serial.printf("[NRF24] Channel %d: %s\n", channel, buffer);
+        display.showData("NRF", channel, buffer);
+        MasterSerial.printf("NRF_DATA:%d:%s\n", channel, buffer);
+    }
+    
+    nrf24.stopListening();
+    channel = (channel + 1) % 126;
+}
+
+// ==================== ĐỌC NFC TAG ====================
+void readNFCTag() {
+    uint8_t uid[7];
+    uint8_t uidLength;
+    
+    if (nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid, &uidLength, 1000)) {
+        Serial.print("NFC Tag UID: ");
+        char uidStr[32] = "";
+        for(uint8_t i=0; i<uidLength; i++) {
+            Serial.printf("%02X ", uid[i]);
+            sprintf(uidStr + strlen(uidStr), "%02X", uid[i]);
         }
-        if (interpreter_state == -1) { interpreterTaskHandler = NULL; }
-        previousMillis = millis(); // ensure that will not dim screen when get back to menu
+        Serial.println();
+        
+        display.showData("NFC", 0, uidStr);
+        MasterSerial.printf("NFC_UID:%s\n", uidStr);
+        
+        // Thử đọc dữ liệu từ sector 0
+        uint8_t data[16];
+        if (nfc.mifareclassic_ReadDataBlock(4, data)) {
+            Serial.print("Block 4 data: ");
+            for(int i=0; i<16; i++) Serial.printf("%02X ", data[i]);
+            Serial.println();
+        }
     }
-#endif
-    tft.fillScreen(bruceConfig.bgColor);
-
-    mainMenu.begin();
-    delay(1);
 }
-#else
 
-void loop() {
-    tft.setLogging();
-    Serial.println(
-        "\n"
-        "██████  ██████  ██    ██  ██████ ███████ \n"
-        "██   ██ ██   ██ ██    ██ ██      ██      \n"
-        "██████  ██████  ██    ██ ██      █████   \n"
-        "██   ██ ██   ██ ██    ██ ██      ██      \n"
-        "██████  ██   ██  ██████   ██████ ███████ \n"
-        "                                         \n"
-        "         PREDATORY FIRMWARE\n\n"
-        "Tips: Connect to the WebUI for better experience\n"
-        "      Add your network by sending: wifi add ssid password\n\n"
-        "At your command:"
-    );
-
-    // Enable navigation through webUI
-    tft.fillScreen(bruceConfig.bgColor);
-    mainMenu.begin();
-    vTaskDelay(10 / portTICK_PERIOD_MS);
+// ==================== XỬ LÝ DỮ LIỆU TỪ C5 SLAVE ====================
+void processSlaveData(String data) {
+    Serial.println("[C5] " + data);
+    display.showData("C5", 0, data);
+    
+    if (data.startsWith("RF_SCAN:")) {
+        // Nhận dữ liệu quét SubGhz từ C5
+        String freq = data.substring(8);
+        display.showData("SubGhz", freq.toInt(), "Detected");
+    }
+    else if (data == "SLAVE_READY") {
+        Serial.println("ESP32-C5 Slave đã sẵn sàng");
+        MasterSerial.println("CMD:START_SCAN");
+    }
 }
-#endif
+
+// ==================== QUÉT TỔNG HỢP ====================
+void performScan() {
+    display.showMessage("Scanning...");
+    
+    // Gửi lệnh cho C5 quét SubGhz
+    MasterSerial.println("SCAN_SUBGHZ:315M");
+    delay(500);
+    MasterSerial.println("SCAN_SUBGHZ:433M");
+    delay(500);
+    MasterSerial.println("SCAN_SUBGHZ:868M");
+    delay(500);
+    
+    // Quét IR
+    ir.scanAllProtocols();
+    
+    // Quét NFC
+    readNFCTag();
+    
+    display.showMessage("Scan Complete!");
+}
