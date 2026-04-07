@@ -108,4 +108,14 @@ public:
             case PANASONIC: return "PANASONIC";
             case JVC: return "JVC";
             case SAMSUNG: return "SAMSUNG";
-            case
+            case LG: return "LG";
+            default: return "UNKNOWN";
+        }
+    }
+    
+    ~IRController() {
+        if (rxPin >= 0) IrReceiver.stop();
+    }
+};
+
+#endif
