@@ -12,23 +12,13 @@
         "partitions": "default_4MB.csv",
         "variant": "esp32c5"
     },
-    "connectivity": [
-        "wifi",
-        "bluetooth"
-    ],
+    "connectivity": ["wifi", "bluetooth"],
     "debug": {
-        "default_tools": [
-            "esp-builtin"
-        ],
-        "onboard_tools": [
-            "esp-builtin"
-        ],
+        "default_tools": ["esp-builtin"],
+        "onboard_tools": ["esp-builtin"],
         "openocd_target": "esp32c5-builtin.cfg"
     },
-    "frameworks": [
-        "arduino",
-        "espidf"
-    ],
+    "frameworks": ["arduino", "espidf"],
     "name": "Bruce ESP32-C5 Slave",
     "upload": {
         "flash_size": "4MB",
