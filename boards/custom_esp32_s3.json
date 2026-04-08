@@ -4,18 +4,18 @@
             "ldscript": "esp32s3_out.ld"
         },
         "core": "esp32",
-        "extra_flags": "-DARDUINO_ESP32S3_DEV",
+        "extra_flags": "-DARDUINO_ESP32S3_DEV -DCONFIG_BRUCE_MASTER=1",
         "f_cpu": "240000000L",
         "f_flash": "80000000L",
         "flash_mode": "qio",
         "mcu": "esp32s3",
         "partitions": "default_16MB.csv",
-        "variant": "esp32s3"
+        "variant": "esp32s3",
+        "board_build.variant_core": "esp32"
     },
     "connectivity": [
         "wifi",
         "bluetooth",
-        "ethernet",
         "usb"
     ],
     "debug": {
@@ -31,7 +31,7 @@
         "arduino",
         "espidf"
     ],
-    "name": "Custom ESP32-S3 Master Board",
+    "name": "Bruce ESP32-S3 Master",
     "upload": {
         "flash_size": "16MB",
         "maximum_ram_size": 524288,
@@ -40,6 +40,6 @@
         "speed": 921600,
         "tool": "esptool.py"
     },
-    "url": "https://github.com/BruceDevices/firmware",
+    "url": "https://github.com/nam348tnh3gp/firmware",
     "vendor": "Bruce Team"
 }
