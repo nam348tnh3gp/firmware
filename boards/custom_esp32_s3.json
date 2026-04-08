@@ -10,27 +10,15 @@
         "flash_mode": "qio",
         "mcu": "esp32s3",
         "partitions": "default_16MB.csv",
-        "variant": "esp32s3",
-        "board_build.variant_core": "esp32"
+        "variant": "esp32s3"
     },
-    "connectivity": [
-        "wifi",
-        "bluetooth",
-        "usb"
-    ],
+    "connectivity": ["wifi", "bluetooth", "usb"],
     "debug": {
-        "default_tools": [
-            "esp-builtin"
-        ],
-        "onboard_tools": [
-            "esp-builtin"
-        ],
+        "default_tools": ["esp-builtin"],
+        "onboard_tools": ["esp-builtin"],
         "openocd_target": "esp32s3-builtin.cfg"
     },
-    "frameworks": [
-        "arduino",
-        "espidf"
-    ],
+    "frameworks": ["arduino", "espidf"],
     "name": "Bruce ESP32-S3 Master",
     "upload": {
         "flash_size": "16MB",
