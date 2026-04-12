@@ -30,7 +30,8 @@ jobs:
       - name: Build firmware
         run: pio run
 
-      - uses: actions/upload-artifact@v4
+      - name: Upload merged firmware
+        uses: actions/upload-artifact@v4
         with:
           name: esp32-c5-tft-firmware
-          path: .pio/build/esp32-c5-tft/*.bin
+          path: Bruce-esp32-c5-tft.bin
