@@ -33,4 +33,4 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: esp32-c5-tft-firmware
-          path: .pio/build/esp32-c5-tft/*.binp
+          path: .pio/build/esp32-c5-tft/*.bin
